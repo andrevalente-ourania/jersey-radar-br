@@ -210,6 +210,37 @@ def search_mercado_livre(query: str, access_token: str, limit: int = 10) -> list
     return data.get("results", []) if isinstance(data, dict) else []
 
 
+def collect_opportunities(results: list[dict], clubs: list[str], rules: dict) -> list[dict]:
+    opportunities = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        title = item.get("title", "")
+        try:
+            price = float(item.get("price") or 0)
+        except (TypeError, ValueError):
+            continue
+
+        club = find_club_in_title(title, clubs)
+        bucket = infer_bucket(title=title, price=price, club=club, rules=rules)
+        score = score_listing(title=title, price=price, bucket=bucket, rules=rules)
+
+        if bucket != "discard" and score >= 65:
+            opportunities.append(
+                {
+                    "score": score,
+                    "bucket": bucket,
+                    "club": club,
+                    "title": title,
+                    "price": price,
+                    "condition": item.get("condition", ""),
+                    "url": item.get("permalink", ""),
+                    "thumbnail": item.get("thumbnail", ""),
+                }
+            )
+    return opportunities
+
+
 def print_grouped_opportunities(opportunities: list[dict]) -> None:
     print("\nTop opportunities:")
     for bucket in BUCKETS:
@@ -263,35 +294,7 @@ def main() -> None:
                 print(f"API: search {attempt} failed; continuing within the {MAX_API_ATTEMPTS}-attempt limit.")
                 continue
 
-            for item in results:
-                if not isinstance(item, dict):
-                    continue
-                title = item.get("title", "")
-                try:
-                    price = float(item.get("price") or 0)
-                except (TypeError, ValueError):
-                    continue
-                url = item.get("permalink", "")
-                thumbnail = item.get("thumbnail", "")
-                condition = item.get("condition", "")
-
-                club = find_club_in_title(title, small_clubs)
-                bucket = infer_bucket(title=title, price=price, club=club, rules=rules)
-                score = score_listing(title=title, price=price, bucket=bucket, rules=rules)
-
-                if bucket != "discard" and score >= 65:
-                    all_opportunities.append(
-                        {
-                            "score": score,
-                            "bucket": bucket,
-                            "club": club,
-                            "title": title,
-                            "price": price,
-                            "condition": condition,
-                            "url": url,
-                            "thumbnail": thumbnail,
-                        }
-                    )
+            all_opportunities.extend(collect_opportunities(results, small_clubs, rules))
 
     all_opportunities.sort(key=lambda item: item["score"], reverse=True)
     print_grouped_opportunities(all_opportunities)
