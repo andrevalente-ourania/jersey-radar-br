@@ -9,7 +9,8 @@ from main import (
     MAX_API_ATTEMPTS,
     MAX_FALLBACK_LINKS,
     MercadoLivreBlockedError,
-    build_fallback_url,
+    SEARCH_PROVIDERS,
+    build_provider_url,
     build_queries,
     collect_opportunities,
     get_meli_access_token,
@@ -40,9 +41,12 @@ def load_streamlit_secrets() -> None:
 @st.cache_data(ttl=900, show_spinner=False)
 def run_dashboard_search() -> dict:
     load_streamlit_secrets()
-    clubs = load_yaml("config/clubs.yml")["small_clubs"]
+    clubs_config = load_yaml("config/clubs.yml")
+    clubs = clubs_config["small_clubs"]
+    national_teams = clubs_config.get("national_teams", [])
+    search_targets = [*clubs, *national_teams]
     rules = load_yaml("config/rules.yml")
-    queries = build_queries(clubs)
+    queries = build_queries(clubs, national_teams)
     access_token = get_meli_access_token()
     opportunities = []
     api_blocked = False
@@ -62,7 +66,7 @@ def run_dashboard_search() -> dict:
             except (httpx.HTTPError, ValueError):
                 failed_searches += 1
                 continue
-            opportunities.extend(collect_opportunities(results, clubs, rules))
+            opportunities.extend(collect_opportunities(results, search_targets, rules))
 
     opportunities.sort(key=lambda item: item["score"], reverse=True)
     return {
@@ -118,23 +122,24 @@ def render_results(data: dict, min_score: int, max_price: int, club_filter: str)
                 render_listing(item)
 
 
-def render_fallback(queries: list[dict[str, str]]) -> None:
-    st.warning(
-        "A API do Mercado Livre bloqueou a busca automática. "
-        "Use os links abaixo para abrir as melhores pesquisas manualmente."
-    )
+def render_fallback(queries: list[dict[str, str]], provider_keys: list[str]) -> None:
     tabs = st.tabs([BUCKET_LABELS[bucket] for bucket in BUCKETS])
     for bucket, tab in zip(BUCKETS, tabs):
         with tab:
             bucket_queries = [item for item in queries if item["bucket"] == bucket]
             for item in bucket_queries:
                 with st.container(border=True):
-                    st.markdown(f"**{item['query']}**")
-                    st.link_button(
-                        "Abrir busca no Mercado Livre",
-                        build_fallback_url(item["query"]),
-                        use_container_width=True,
-                    )
+                    target_type = "Seleção" if item.get("kind") == "national_team" else "Clube"
+                    st.markdown(f"**{item['query']}** · {target_type}")
+                    columns = st.columns(3)
+                    for index, provider_key in enumerate(provider_keys):
+                        provider = SEARCH_PROVIDERS[provider_key]
+                        with columns[index % 3]:
+                            st.link_button(
+                                provider["label"],
+                                build_provider_url(provider_key, item["query"]),
+                                use_container_width=True,
+                            )
 
 
 def main() -> None:
@@ -152,7 +157,10 @@ def main() -> None:
     )
 
     st.title("👕 Jersey Radar BR")
-    st.caption("Camisas fora do radar, organizadas por preço, beleza e potencial de coleção.")
+    st.caption(
+        "Camisas de clubes e seleções em várias lojas, organizadas por preço, "
+        "beleza e potencial de coleção."
+    )
 
     with st.spinner("Procurando camisetas..."):
         data = run_dashboard_search()
@@ -165,23 +173,37 @@ def main() -> None:
     min_score = st.sidebar.slider("Score mínimo", 0, 100, 65, 5)
     max_price = st.sidebar.slider("Preço máximo", 50, 1000, 350, 25)
     clubs = sorted({item["club"] for item in data["opportunities"] if item.get("club")})
-    club_filter = st.sidebar.selectbox("Clube", ["Todos", *clubs])
+    club_filter = st.sidebar.selectbox("Clube ou seleção", ["Todos", *clubs])
+    provider_keys = st.sidebar.multiselect(
+        "Lojas",
+        options=list(SEARCH_PROVIDERS),
+        default=list(SEARCH_PROVIDERS),
+        format_func=lambda key: SEARCH_PROVIDERS[key]["label"],
+    )
 
     metric_1, metric_2, metric_3 = st.columns(3)
     metric_1.metric("Oportunidades", len(data["opportunities"]))
     metric_2.metric("OAuth", "Ativo" if data["oauth_ok"] else "Indisponível")
-    metric_3.metric("API", "Bloqueada" if data["api_blocked"] else "Disponível")
+    metric_3.metric("API Mercado Livre", "Bloqueada" if data["api_blocked"] else "Disponível")
     st.caption(f"Atualizado em {data['updated_at'].replace('T', ' ')}")
 
     if data["opportunities"]:
         render_results(data, min_score, max_price, club_filter)
 
-    if data["api_blocked"] or not data["oauth_ok"]:
-        st.divider()
-        st.subheader("Buscas fallback")
-        render_fallback(data["fallback_queries"])
-    elif not data["opportunities"]:
+    if not data["opportunities"] and not (data["api_blocked"] or not data["oauth_ok"]):
         st.info("A busca terminou sem oportunidades acima do score mínimo.")
+
+    st.divider()
+    st.subheader("Buscar promoções em outras lojas")
+    if data["api_blocked"]:
+        st.warning(
+            "A API do Mercado Livre bloqueou a busca automática, mas os links "
+            "multiloja abaixo continuam funcionando."
+        )
+    if provider_keys:
+        render_fallback(data["fallback_queries"], provider_keys)
+    else:
+        st.info("Selecione pelo menos uma loja no filtro lateral.")
 
 
 if __name__ == "__main__":
