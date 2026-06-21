@@ -1,15 +1,15 @@
 # Jersey Radar BR
 
-Buscador de camisas de clubes e seleções fora do radar, com score por preço,
-raridade e sinais de coleção.
+Buscador de camisas de clubes brasileiros, clubes do mundo inteiro e seleções,
+com score por preço, raridade e sinais de coleção.
 
 ## Interface web
 
 O painel mostra imagem, preço, score, clube e link do anúncio quando a API do
 Mercado Livre está disponível. Com ou sem a API, o painel também cria buscas
 manuais em Mercado Livre, Enjoei, Adidas, Nike, Brechó do Futebol e Netshoes.
-As 20 buscas prioritárias alternam clubes e seleções e ficam separadas nas
-mesmas categorias:
+As 20 buscas prioritárias alternam clubes brasileiros, clubes internacionais e
+seleções, e ficam separadas nas mesmas categorias:
 
 - `small_club_cheap`
 - `cult_beautiful`
