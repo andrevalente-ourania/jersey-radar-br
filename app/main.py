@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+MELI_SEARCH_URL = "https://api.mercadolibre.com/sites/MLB/search"
 MELI_TOKEN_URL = "https://api.mercadolibre.com/oauth/token"
 
 
@@ -191,6 +192,9 @@ def search_mercado_livre(query: str, access_token: str | None, limit: int = 10) 
 def main() -> None:
     clubs_config = load_yaml("config/clubs.yml")
     rules = load_yaml("config/rules.yml")
+
+    small_clubs = clubs_config["small_clubs"]
+    queries = build_queries(small_clubs)
 
     access_token = get_meli_access_token()
     if access_token:
