@@ -1,5 +1,7 @@
 import os
 from datetime import datetime
+from itertools import zip_longest
+from urllib.parse import urlencode
 
 import httpx
 import streamlit as st
@@ -9,14 +11,77 @@ from main import (
     MAX_API_ATTEMPTS,
     MAX_FALLBACK_LINKS,
     MercadoLivreBlockedError,
-    SEARCH_PROVIDERS,
-    build_provider_url,
-    build_queries,
     collect_opportunities,
     get_meli_access_token,
     load_yaml,
     search_mercado_livre,
 )
+
+
+SEARCH_PROVIDERS = {
+    "mercado_livre": {
+        "label": "Mercado Livre",
+        "base_url": "https://lista.mercadolivre.com.br/",
+        "query_param": "q",
+    },
+    "enjoei": {
+        "label": "Enjoei",
+        "base_url": "https://www.enjoei.com.br/s",
+        "query_param": "q",
+    },
+    "adidas": {
+        "label": "Adidas",
+        "base_url": "https://www.adidas.com.br/search",
+        "query_param": "q",
+    },
+    "nike": {
+        "label": "Nike",
+        "base_url": "https://www.nike.com.br/nav",
+        "query_param": "q",
+    },
+    "brecho_do_futebol": {
+        "label": "Brechó do Futebol",
+        "base_url": "https://brechodofutebol.com/search",
+        "query_param": "q",
+        "extra_params": {"type": "product"},
+    },
+    "netshoes": {
+        "label": "Netshoes",
+        "base_url": "https://www.netshoes.com.br/busca",
+        "query_param": "q",
+        "extra_params": {"nsCat": "Natural"},
+    },
+}
+QUERY_SPECS = (
+    ("small_club_cheap", "camisa {target} oficial promoção"),
+    ("cult_beautiful", "camisa {target} retrô goleiro terceira"),
+    ("light_collectible", "camisa {target} edição especial patch desconto"),
+)
+
+
+def build_dashboard_queries(clubs: list[str], national_teams: list[str]) -> list[dict[str, str]]:
+    queries = []
+    for national_team, club in zip_longest(national_teams, clubs):
+        for target, kind in ((national_team, "national_team"), (club, "club")):
+            if not target:
+                continue
+            for bucket, template in QUERY_SPECS:
+                queries.append(
+                    {
+                        "bucket": bucket,
+                        "query": template.format(target=target),
+                        "target": target,
+                        "kind": kind,
+                    }
+                )
+    return queries
+
+
+def build_provider_url(provider_key: str, query: str) -> str:
+    provider = SEARCH_PROVIDERS[provider_key]
+    params = dict(provider.get("extra_params", {}))
+    params[provider["query_param"]] = query
+    return f"{provider['base_url']}?{urlencode(params)}"
 
 
 BUCKET_LABELS = {
@@ -46,7 +111,7 @@ def run_dashboard_search() -> dict:
     national_teams = clubs_config.get("national_teams", [])
     search_targets = [*clubs, *national_teams]
     rules = load_yaml("config/rules.yml")
-    queries = build_queries(clubs, national_teams)
+    queries = build_dashboard_queries(clubs, national_teams)
     access_token = get_meli_access_token()
     opportunities = []
     api_blocked = False
