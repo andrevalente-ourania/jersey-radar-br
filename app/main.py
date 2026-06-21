@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-MELI_SEARCH_URL = "https://api.mercadolibre.com/sites/MLB/search"
+MELI_TOKEN_URL = "https://api.mercadolibre.com/oauth/token"
 
 
 def load_yaml(path: str) -> dict:
@@ -135,8 +135,33 @@ def build_queries(clubs: list[str]) -> list[str]:
 
     return queries
 
+def get_meli_access_token() -> str | None:
+    client_id = os.getenv("MELI_CLIENT_ID")
+    client_secret = os.getenv("MELI_CLIENT_SECRET")
 
-def search_mercado_livre(query: str, limit: int = 10) -> list[dict]:
+    if not client_id or not client_secret:
+        print("MELI_CLIENT_ID or MELI_CLIENT_SECRET not configured.")
+        return None
+
+    payload = {
+        "grant_type": "client_credentials",
+        "client_id": client_id,
+        "client_secret": client_secret,
+    }
+
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "application/json",
+    }
+
+    with httpx.Client(timeout=20, follow_redirects=True) as client:
+        response = client.post(MELI_TOKEN_URL, data=payload, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+
+    return data.get("access_token")
+
+def search_mercado_livre(query: str, access_token: str | None, limit: int = 10) -> list[dict]:
     params = {
         "q": query,
         "limit": limit,
@@ -152,6 +177,9 @@ def search_mercado_livre(query: str, limit: int = 10) -> list[dict]:
         "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
     }
 
+    if access_token:
+        headers["Authorization"] = f"Bearer {access_token}"
+
     with httpx.Client(timeout=20, headers=headers, follow_redirects=True) as client:
         response = client.get(MELI_SEARCH_URL, params=params)
         response.raise_for_status()
@@ -164,8 +192,11 @@ def main() -> None:
     clubs_config = load_yaml("config/clubs.yml")
     rules = load_yaml("config/rules.yml")
 
-    small_clubs = clubs_config["small_clubs"]
-    queries = build_queries(small_clubs)
+    access_token = get_meli_access_token()
+    if access_token:
+        print("Mercado Livre access token generated successfully.")
+    else:
+        print("Running without Mercado Livre access token.")
 
     all_opportunities = []
 
@@ -174,7 +205,7 @@ def main() -> None:
 
     for query in queries[:30]:
         try:
-            results = search_mercado_livre(query=query, limit=10)
+            results = search_mercado_livre(query=query, access_token=access_token, limit=10)
         except Exception as error:
             print(f"Error searching '{query}': {error}")
             continue
