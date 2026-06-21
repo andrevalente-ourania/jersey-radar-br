@@ -1,5 +1,6 @@
 import os
 from datetime import datetime
+from itertools import zip_longest
 from urllib.parse import urlencode
 
 import httpx
@@ -16,10 +17,44 @@ MELI_WEB_SEARCH_URL = "https://lista.mercadolivre.com.br/"
 MAX_API_ATTEMPTS = 10
 MAX_FALLBACK_LINKS = 20
 BUCKETS = ("small_club_cheap", "cult_beautiful", "light_collectible")
+SEARCH_PROVIDERS = {
+    "mercado_livre": {
+        "label": "Mercado Livre",
+        "base_url": MELI_WEB_SEARCH_URL,
+        "query_param": "q",
+    },
+    "enjoei": {
+        "label": "Enjoei",
+        "base_url": "https://www.enjoei.com.br/s",
+        "query_param": "q",
+    },
+    "adidas": {
+        "label": "Adidas",
+        "base_url": "https://www.adidas.com.br/search",
+        "query_param": "q",
+    },
+    "nike": {
+        "label": "Nike",
+        "base_url": "https://www.nike.com.br/nav",
+        "query_param": "q",
+    },
+    "brecho_do_futebol": {
+        "label": "Brechó do Futebol",
+        "base_url": "https://brechodofutebol.com/search",
+        "query_param": "q",
+        "extra_params": {"type": "product"},
+    },
+    "netshoes": {
+        "label": "Netshoes",
+        "base_url": "https://www.netshoes.com.br/busca",
+        "query_param": "q",
+        "extra_params": {"nsCat": "Natural"},
+    },
+}
 QUERY_SPECS = (
     ("small_club_cheap", "camisa {club} oficial promoção"),
-    ("cult_beautiful", "camisa {club} goleiro terceira"),
-    ("light_collectible", "camisa {club} comemorativa patch"),
+    ("cult_beautiful", "camisa {club} retrô goleiro terceira"),
+    ("light_collectible", "camisa {club} edição especial patch desconto"),
 )
 
 
@@ -134,16 +169,43 @@ def find_club_in_title(title: str, clubs: list[str]) -> str | None:
     return None
 
 
-def build_queries(clubs: list[str]) -> list[dict[str, str]]:
+def interleave_targets(clubs: list[str], national_teams: list[str] | None = None) -> list[dict[str, str]]:
+    targets = []
+    for national_team, club in zip_longest(national_teams or [], clubs):
+        if national_team:
+            targets.append({"target": national_team, "kind": "national_team"})
+        if club:
+            targets.append({"target": club, "kind": "club"})
+    return targets
+
+
+def build_queries(
+    clubs: list[str], national_teams: list[str] | None = None
+) -> list[dict[str, str]]:
     queries = []
-    for club in clubs:
+    for target_item in interleave_targets(clubs, national_teams):
+        target = target_item["target"]
         for bucket, template in QUERY_SPECS:
-            queries.append({"bucket": bucket, "query": template.format(club=club)})
+            queries.append(
+                {
+                    "bucket": bucket,
+                    "query": template.format(club=target),
+                    "target": target,
+                    "kind": target_item["kind"],
+                }
+            )
     return queries
 
 
+def build_provider_url(provider_key: str, query: str) -> str:
+    provider = SEARCH_PROVIDERS[provider_key]
+    params = dict(provider.get("extra_params", {}))
+    params[provider["query_param"]] = query
+    return f"{provider['base_url']}?{urlencode(params)}"
+
+
 def build_fallback_url(query: str) -> str:
-    return f"{MELI_WEB_SEARCH_URL}?{urlencode({'q': query})}"
+    return build_provider_url("mercado_livre", query)
 
 
 def get_meli_access_token() -> str | None:
@@ -258,14 +320,17 @@ def print_grouped_opportunities(opportunities: list[dict]) -> None:
 
 
 def print_fallback_links(queries: list[dict[str, str]]) -> None:
-    print(f"\nFallback mode: top {MAX_FALLBACK_LINKS} Mercado Livre searches to inspect manually")
+    print(f"\nFallback mode: top {MAX_FALLBACK_LINKS} multi-store searches to inspect manually")
+    provider_keys = tuple(SEARCH_PROVIDERS)
     fallback_queries = queries[:MAX_FALLBACK_LINKS]
     for bucket in BUCKETS:
         print(f"\n{bucket}")
         bucket_queries = [item for item in fallback_queries if item["bucket"] == bucket]
         for index, item in enumerate(bucket_queries, start=1):
-            print(f"  {index}. {item['query']}")
-            print(f"     {build_fallback_url(item['query'])}")
+            provider_key = provider_keys[(index - 1) % len(provider_keys)]
+            provider = SEARCH_PROVIDERS[provider_key]
+            print(f"  {index}. [{provider['label']}] {item['query']}")
+            print(f"     {build_provider_url(provider_key, item['query'])}")
 
 
 def main() -> None:
@@ -273,7 +338,9 @@ def main() -> None:
     rules = load_yaml("config/rules.yml")
 
     small_clubs = clubs_config["small_clubs"]
-    queries = build_queries(small_clubs)
+    national_teams = clubs_config.get("national_teams", [])
+    search_targets = [*small_clubs, *national_teams]
+    queries = build_queries(small_clubs, national_teams)
     access_token = get_meli_access_token()
     fallback_mode = access_token is None
     all_opportunities = []
@@ -294,7 +361,7 @@ def main() -> None:
                 print(f"API: search {attempt} failed; continuing within the {MAX_API_ATTEMPTS}-attempt limit.")
                 continue
 
-            all_opportunities.extend(collect_opportunities(results, small_clubs, rules))
+            all_opportunities.extend(collect_opportunities(results, search_targets, rules))
 
     all_opportunities.sort(key=lambda item: item["score"], reverse=True)
     print_grouped_opportunities(all_opportunities)
