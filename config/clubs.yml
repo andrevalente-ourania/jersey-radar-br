@@ -1,0 +1,75 @@
+small_clubs:
+  - Portuguesa
+  - Juventus da Mooca
+  - Nacional-SP
+  - Oeste
+  - São Caetano
+  - Água Santa
+  - Ferroviária
+  - XV de Piracicaba
+  - Botafogo-SP
+  - Comercial-SP
+  - Londrina
+  - Criciúma
+  - Figueirense
+  - Avaí
+  - Paysandu
+  - Remo
+  - Sampaio Corrêa
+  - ABC
+  - América-RN
+  - Santa Cruz
+  - Náutico
+  - CSA
+  - CRB
+  - Confiança
+  - Sergipe
+  - Treze
+  - Campinense
+  - Moto Club
+  - River-PI
+  - Ferroviário
+  - Manaus
+  - Volta Redonda
+  - Ypiranga-RS
+  - São José-RS
+  - Caxias
+  - Brasil de Pelotas
+  - Andraus Brasil
+  - Athletic Club
+  - Aparecidense
+  - Mirassol
+  - Novorizontino
+  - Ituano
+  - Brusque
+  - Operário-PR
+
+exclude_big_clubs:
+  - Flamengo
+  - Corinthians
+  - Palmeiras
+  - São Paulo
+  - Santos
+  - Vasco
+  - Fluminense
+  - Botafogo
+  - Grêmio
+  - Internacional
+  - Cruzeiro
+  - Atlético Mineiro
+
+regional_keywords:
+  - Copa do Nordeste
+  - estadual
+  - campeonato paulista
+  - campeonato carioca
+  - campeonato mineiro
+  - campeonato gaúcho
+  - série c
+  - série d
+  - acesso
+  - centenário
+  - comemorativa
+  - goleiro
+  - terceira camisa
+  - patch
