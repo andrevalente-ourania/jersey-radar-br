@@ -169,21 +169,31 @@ def find_club_in_title(title: str, clubs: list[str]) -> str | None:
     return None
 
 
-def interleave_targets(clubs: list[str], national_teams: list[str] | None = None) -> list[dict[str, str]]:
+def interleave_targets(
+    clubs: list[str],
+    national_teams: list[str] | None = None,
+    world_clubs: list[str] | None = None,
+) -> list[dict[str, str]]:
     targets = []
-    for national_team, club in zip_longest(national_teams or [], clubs):
+    for national_team, club, world_club in zip_longest(
+        national_teams or [], clubs, world_clubs or []
+    ):
         if national_team:
             targets.append({"target": national_team, "kind": "national_team"})
         if club:
             targets.append({"target": club, "kind": "club"})
+        if world_club:
+            targets.append({"target": world_club, "kind": "world_club"})
     return targets
 
 
 def build_queries(
-    clubs: list[str], national_teams: list[str] | None = None
+    clubs: list[str],
+    national_teams: list[str] | None = None,
+    world_clubs: list[str] | None = None,
 ) -> list[dict[str, str]]:
     queries = []
-    for target_item in interleave_targets(clubs, national_teams):
+    for target_item in interleave_targets(clubs, national_teams, world_clubs):
         target = target_item["target"]
         for bucket, template in QUERY_SPECS:
             queries.append(
@@ -339,8 +349,9 @@ def main() -> None:
 
     small_clubs = clubs_config["small_clubs"]
     national_teams = clubs_config.get("national_teams", [])
-    search_targets = [*small_clubs, *national_teams]
-    queries = build_queries(small_clubs, national_teams)
+    world_clubs = clubs_config.get("world_clubs", [])
+    search_targets = [*small_clubs, *national_teams, *world_clubs]
+    queries = build_queries(small_clubs, national_teams, world_clubs)
     access_token = get_meli_access_token()
     fallback_mode = access_token is None
     all_opportunities = []
