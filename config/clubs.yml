@@ -44,6 +44,28 @@ small_clubs:
   - Brusque
   - Operário-PR
 
+national_teams:
+  - Brasil
+  - Argentina
+  - Uruguai
+  - Colômbia
+  - Chile
+  - México
+  - Estados Unidos
+  - Japão
+  - Nigéria
+  - Camarões
+  - Senegal
+  - Marrocos
+  - França
+  - Itália
+  - Alemanha
+  - Holanda
+  - Inglaterra
+  - Espanha
+  - Portugal
+  - Croácia
+
 exclude_big_clubs:
   - Flamengo
   - Corinthians
