@@ -4,7 +4,7 @@ from datetime import datetime
 import httpx
 import streamlit as st
 
-from app.main import (
+from main import (
     BUCKETS,
     MAX_API_ATTEMPTS,
     MAX_FALLBACK_LINKS,
