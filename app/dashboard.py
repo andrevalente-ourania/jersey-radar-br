@@ -59,10 +59,18 @@ QUERY_SPECS = (
 )
 
 
-def build_dashboard_queries(clubs: list[str], national_teams: list[str]) -> list[dict[str, str]]:
+def build_dashboard_queries(
+    clubs: list[str], national_teams: list[str], world_clubs: list[str]
+) -> list[dict[str, str]]:
     queries = []
-    for national_team, club in zip_longest(national_teams, clubs):
-        for target, kind in ((national_team, "national_team"), (club, "club")):
+    for national_team, club, world_club in zip_longest(
+        national_teams, clubs, world_clubs
+    ):
+        for target, kind in (
+            (national_team, "national_team"),
+            (club, "club"),
+            (world_club, "world_club"),
+        ):
             if not target:
                 continue
             for bucket, template in QUERY_SPECS:
@@ -109,9 +117,10 @@ def run_dashboard_search() -> dict:
     clubs_config = load_yaml("config/clubs.yml")
     clubs = clubs_config["small_clubs"]
     national_teams = clubs_config.get("national_teams", [])
-    search_targets = [*clubs, *national_teams]
+    world_clubs = clubs_config.get("world_clubs", [])
+    search_targets = [*clubs, *national_teams, *world_clubs]
     rules = load_yaml("config/rules.yml")
-    queries = build_dashboard_queries(clubs, national_teams)
+    queries = build_dashboard_queries(clubs, national_teams, world_clubs)
     access_token = get_meli_access_token()
     opportunities = []
     api_blocked = False
@@ -194,7 +203,10 @@ def render_fallback(queries: list[dict[str, str]], provider_keys: list[str]) -> 
             bucket_queries = [item for item in queries if item["bucket"] == bucket]
             for item in bucket_queries:
                 with st.container(border=True):
-                    target_type = "Seleção" if item.get("kind") == "national_team" else "Clube"
+                    target_type = {
+                        "national_team": "Seleção",
+                        "world_club": "Clube internacional",
+                    }.get(item.get("kind"), "Clube brasileiro")
                     st.markdown(f"**{item['query']}** · {target_type}")
                     columns = st.columns(3)
                     for index, provider_key in enumerate(provider_keys):
