@@ -1,8 +1,9 @@
 import os
-import re
-import yaml
-import httpx
 from datetime import datetime
+from urllib.parse import urlencode
+
+import httpx
+import yaml
 from dotenv import load_dotenv
 
 
@@ -11,6 +12,19 @@ load_dotenv()
 
 MELI_SEARCH_URL = "https://api.mercadolibre.com/sites/MLB/search"
 MELI_TOKEN_URL = "https://api.mercadolibre.com/oauth/token"
+MELI_WEB_SEARCH_URL = "https://lista.mercadolivre.com.br/"
+MAX_API_ATTEMPTS = 10
+MAX_FALLBACK_LINKS = 20
+BUCKETS = ("small_club_cheap", "cult_beautiful", "light_collectible")
+QUERY_SPECS = (
+    ("small_club_cheap", "camisa {club} oficial promoção"),
+    ("cult_beautiful", "camisa {club} goleiro terceira"),
+    ("light_collectible", "camisa {club} comemorativa patch"),
+)
+
+
+class MercadoLivreBlockedError(Exception):
+    """Raised when Mercado Livre blocks API searches."""
 
 
 def load_yaml(path: str) -> dict:
@@ -120,28 +134,24 @@ def find_club_in_title(title: str, clubs: list[str]) -> str | None:
     return None
 
 
-def build_queries(clubs: list[str]) -> list[str]:
-    query_templates = [
-        "camisa {club} oficial",
-        "camisa {club} nova",
-        "camisa {club} goleiro",
-        "camisa {club} terceira",
-        "camisa {club} torcedor",
-    ]
-
+def build_queries(clubs: list[str]) -> list[dict[str, str]]:
     queries = []
     for club in clubs:
-        for template in query_templates:
-            queries.append(template.format(club=club))
-
+        for bucket, template in QUERY_SPECS:
+            queries.append({"bucket": bucket, "query": template.format(club=club)})
     return queries
+
+
+def build_fallback_url(query: str) -> str:
+    return f"{MELI_WEB_SEARCH_URL}?{urlencode({'q': query})}"
+
 
 def get_meli_access_token() -> str | None:
     client_id = os.getenv("MELI_CLIENT_ID")
     client_secret = os.getenv("MELI_CLIENT_SECRET")
 
     if not client_id or not client_secret:
-        print("MELI_CLIENT_ID or MELI_CLIENT_SECRET not configured.")
+        print("OAuth: not configured; fallback mode will be used.")
         return None
 
     payload = {
@@ -155,14 +165,25 @@ def get_meli_access_token() -> str | None:
         "Accept": "application/json",
     }
 
-    with httpx.Client(timeout=20, follow_redirects=True) as client:
-        response = client.post(MELI_TOKEN_URL, data=payload, headers=headers)
-        response.raise_for_status()
-        data = response.json()
+    try:
+        with httpx.Client(timeout=20, follow_redirects=True) as client:
+            response = client.post(MELI_TOKEN_URL, data=payload, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+    except (httpx.HTTPError, ValueError):
+        print("OAuth: failed; fallback mode will be used.")
+        return None
 
-    return data.get("access_token")
+    access_token = data.get("access_token") if isinstance(data, dict) else None
+    if not access_token:
+        print("OAuth: no access token returned; fallback mode will be used.")
+        return None
 
-def search_mercado_livre(query: str, access_token: str | None, limit: int = 10) -> list[dict]:
+    print("OAuth: access token generated successfully.")
+    return access_token
+
+
+def search_mercado_livre(query: str, access_token: str, limit: int = 10) -> list[dict]:
     params = {
         "q": query,
         "limit": limit,
@@ -176,17 +197,44 @@ def search_mercado_livre(query: str, access_token: str | None, limit: int = 10) 
         ),
         "Accept": "application/json",
         "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+        "Authorization": f"Bearer {access_token}",
     }
-
-    if access_token:
-        headers["Authorization"] = f"Bearer {access_token}"
 
     with httpx.Client(timeout=20, headers=headers, follow_redirects=True) as client:
         response = client.get(MELI_SEARCH_URL, params=params)
+        if response.status_code == 403:
+            raise MercadoLivreBlockedError
         response.raise_for_status()
         data = response.json()
 
-    return data.get("results", [])
+    return data.get("results", []) if isinstance(data, dict) else []
+
+
+def print_grouped_opportunities(opportunities: list[dict]) -> None:
+    print("\nTop opportunities:")
+    for bucket in BUCKETS:
+        print(f"\n{bucket}")
+        bucket_items = [item for item in opportunities if item["bucket"] == bucket][:15]
+        if not bucket_items:
+            print("  No opportunities found.")
+            continue
+        for index, item in enumerate(bucket_items, start=1):
+            print(
+                f"  {index}. [{item['score']}] {item['club']} | "
+                f"R${item['price']:.2f} | {item['title']}"
+            )
+            print(f"     {item['url']}")
+
+
+def print_fallback_links(queries: list[dict[str, str]]) -> None:
+    print(f"\nFallback mode: top {MAX_FALLBACK_LINKS} Mercado Livre searches to inspect manually")
+    fallback_queries = queries[:MAX_FALLBACK_LINKS]
+    for bucket in BUCKETS:
+        print(f"\n{bucket}")
+        bucket_queries = [item for item in fallback_queries if item["bucket"] == bucket]
+        for index, item in enumerate(bucket_queries, start=1):
+            print(f"  {index}. {item['query']}")
+            print(f"     {build_fallback_url(item['query'])}")
 
 
 def main() -> None:
@@ -195,66 +243,63 @@ def main() -> None:
 
     small_clubs = clubs_config["small_clubs"]
     queries = build_queries(small_clubs)
-
     access_token = get_meli_access_token()
-    if access_token:
-        print("Mercado Livre access token generated successfully.")
-    else:
-        print("Running without Mercado Livre access token.")
-
+    fallback_mode = access_token is None
     all_opportunities = []
 
     print(f"Jersey Radar BR — {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    print(f"Running {len(queries)} Mercado Livre searches...")
 
-    for query in queries[:30]:
-        try:
-            results = search_mercado_livre(query=query, access_token=access_token, limit=10)
-        except Exception as error:
-            print(f"Error searching '{query}': {error}")
-            continue
+    if access_token:
+        print(f"API: trying at most {MAX_API_ATTEMPTS} searches.")
+        for attempt, query_item in enumerate(queries[:MAX_API_ATTEMPTS], start=1):
+            query = query_item["query"]
+            try:
+                results = search_mercado_livre(query=query, access_token=access_token, limit=10)
+            except MercadoLivreBlockedError:
+                print(f"API: blocked with HTTP 403 on attempt {attempt}; stopping API searches.")
+                fallback_mode = True
+                break
+            except (httpx.HTTPError, ValueError):
+                print(f"API: search {attempt} failed; continuing within the {MAX_API_ATTEMPTS}-attempt limit.")
+                continue
 
-        for item in results:
-            title = item.get("title", "")
-            price = float(item.get("price") or 0)
-            url = item.get("permalink", "")
-            thumbnail = item.get("thumbnail", "")
-            condition = item.get("condition", "")
+            for item in results:
+                if not isinstance(item, dict):
+                    continue
+                title = item.get("title", "")
+                try:
+                    price = float(item.get("price") or 0)
+                except (TypeError, ValueError):
+                    continue
+                url = item.get("permalink", "")
+                thumbnail = item.get("thumbnail", "")
+                condition = item.get("condition", "")
 
-            club = find_club_in_title(title, small_clubs)
-            bucket = infer_bucket(title=title, price=price, club=club, rules=rules)
-            score = score_listing(title=title, price=price, bucket=bucket, rules=rules)
+                club = find_club_in_title(title, small_clubs)
+                bucket = infer_bucket(title=title, price=price, club=club, rules=rules)
+                score = score_listing(title=title, price=price, bucket=bucket, rules=rules)
 
-            if bucket != "discard" and score >= 65:
-                all_opportunities.append(
-                    {
-                        "score": score,
-                        "bucket": bucket,
-                        "club": club,
-                        "title": title,
-                        "price": price,
-                        "condition": condition,
-                        "url": url,
-                        "thumbnail": thumbnail,
-                    }
-                )
+                if bucket != "discard" and score >= 65:
+                    all_opportunities.append(
+                        {
+                            "score": score,
+                            "bucket": bucket,
+                            "club": club,
+                            "title": title,
+                            "price": price,
+                            "condition": condition,
+                            "url": url,
+                            "thumbnail": thumbnail,
+                        }
+                    )
 
-    all_opportunities = sorted(
-        all_opportunities,
-        key=lambda item: item["score"],
-        reverse=True,
-    )
+    all_opportunities.sort(key=lambda item: item["score"], reverse=True)
+    print_grouped_opportunities(all_opportunities)
 
-    print("\nTop opportunities:")
-    for index, item in enumerate(all_opportunities[:15], start=1):
-        print(
-            f"{index}. [{item['score']}] {item['bucket']} | "
-            f"{item['club']} | R${item['price']:.2f} | {item['title']}"
-        )
-        print(f"   {item['url']}")
-
-    if not all_opportunities:
-        print("No opportunities found today.")
+    if fallback_mode:
+        print_fallback_links(queries)
+    else:
+        print("\nAPI: searches completed without an HTTP 403 block.")
 
 
 if __name__ == "__main__":
