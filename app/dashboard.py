@@ -57,6 +57,7 @@ QUERY_SPECS = (
     ("cult_beautiful", "camisa {target} retrô goleiro terceira"),
     ("light_collectible", "camisa {target} edição especial patch desconto"),
 )
+SEARCH_CACHE_VERSION = "world-clubs-v1"
 
 
 def build_dashboard_queries(
@@ -112,7 +113,8 @@ def load_streamlit_secrets() -> None:
 
 
 @st.cache_data(ttl=900, show_spinner=False)
-def run_dashboard_search() -> dict:
+def run_dashboard_search(cache_version: str) -> dict:
+    _ = cache_version
     load_streamlit_secrets()
     clubs_config = load_yaml("config/clubs.yml")
     clubs = clubs_config["small_clubs"]
@@ -240,7 +242,7 @@ def main() -> None:
     )
 
     with st.spinner("Procurando camisetas..."):
-        data = run_dashboard_search()
+        data = run_dashboard_search(SEARCH_CACHE_VERSION)
 
     if st.sidebar.button("Atualizar busca", type="primary", use_container_width=True):
         run_dashboard_search.clear()
