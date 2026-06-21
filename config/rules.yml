@@ -34,10 +34,6 @@ negative_terms:
   - retro generica
   - sem marca
   - personalizada
-  - seleção brasileira
-  - selecao brasileira
-  - brasil 2002 retrô
-  - brasil 2002 retro
 
 buckets:
   small_club_cheap:
@@ -47,4 +43,4 @@ buckets:
   light_collectible:
     description: "Peça nova com algum elemento de coleção: patch, campanha, centenário, acesso, edição especial."
   discard:
-    description: "Réplica, genérica, seleção, clube grande sem exceção, ou preço alto sem tese."
+    description: "Réplica, genérica ou preço alto sem tese."
