@@ -66,6 +66,101 @@ national_teams:
   - Portugal
   - Croácia
 
+world_clubs:
+  # Europa
+  - St. Pauli
+  - Venezia
+  - Parma
+  - Palermo
+  - Sampdoria
+  - Genoa
+  - Fiorentina
+  - Torino
+  - Bologna
+  - Athletic Bilbao
+  - Real Betis
+  - Rayo Vallecano
+  - Deportivo La Coruña
+  - Celtic
+  - Rangers
+  - Hearts
+  - Hibernian
+  - Sunderland
+  - Leeds United
+  - West Ham
+  - Crystal Palace
+  - Nottingham Forest
+  - Marseille
+  - Saint-Étienne
+  - Lens
+  - Nantes
+  - Toulouse
+  - Union Berlin
+  - Werder Bremen
+  - Schalke 04
+  - Hamburg
+  - Borussia Mönchengladbach
+  - Ajax
+  - Feyenoord
+  - PSV
+  - AZ Alkmaar
+  - Club Brugge
+  - Anderlecht
+  - Standard Liège
+  - Porto
+  - Benfica
+  - Sporting
+  - Boavista
+  - Vitória de Guimarães
+  - Galatasaray
+  - Fenerbahçe
+  - Besiktas
+  - Dinamo Zagreb
+  - Estrela Vermelha
+  - Partizan
+  - Olympiacos
+  - Panathinaikos
+  - AEK Athens
+  # Américas
+  - Boca Juniors
+  - River Plate
+  - Independiente
+  - Racing Club
+  - San Lorenzo
+  - Newell's Old Boys
+  - Rosario Central
+  - Peñarol
+  - Nacional do Uruguai
+  - Colo-Colo
+  - Universidad de Chile
+  - América de Cali
+  - Atlético Nacional
+  - Millonarios
+  - LDU Quito
+  - Barcelona de Guayaquil
+  - Alianza Lima
+  - Universitario
+  - América do México
+  - Chivas Guadalajara
+  - Pumas UNAM
+  - Cruz Azul
+  - LA Galaxy
+  - Portland Timbers
+  - Seattle Sounders
+  # Ásia, África e Oceania
+  - Kashima Antlers
+  - Urawa Reds
+  - Yokohama F. Marinos
+  - Tokyo Verdy
+  - Al Ahly
+  - Zamalek
+  - Raja Casablanca
+  - Wydad Casablanca
+  - Kaizer Chiefs
+  - Orlando Pirates
+  - Mohun Bagan
+  - Melbourne Victory
+
 exclude_big_clubs:
   - Flamengo
   - Corinthians
