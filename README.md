@@ -6,14 +6,19 @@ com score por preço, raridade e sinais de coleção.
 ## Interface web
 
 O painel mostra imagem, preço, score, clube e link do anúncio quando a API do
-Mercado Livre está disponível. Com ou sem a API, o painel também cria buscas
-manuais em Mercado Livre, Enjoei, Adidas, Nike, Brechó do Futebol e Netshoes.
-As 20 buscas prioritárias alternam clubes brasileiros, clubes internacionais e
-seleções, e ficam separadas nas mesmas categorias:
+Mercado Livre está disponível. Com ou sem a API, ele também cria rankings por
+marketplace para Mercado Livre, Enjoei, Adidas, Nike, Brechó do Futebol e
+Netshoes. Os filtros atuam sobre todas as buscas de clubes brasileiros, clubes
+internacionais e seleções nas categorias:
 
 - `small_club_cheap`
 - `cult_beautiful`
 - `light_collectible`
+
+Cada busca pode ser adicionada a uma shortlist. A seleção fica codificada no
+endereço do painel, sobrevive a recargas e pode ser exportada como JSON para uma
+rotina de monitoramento. Alertas automáticos de queda de preço exigem uma fonte
+autorizada de preços e um canal de notificação.
 
 ### Rodar localmente
 
