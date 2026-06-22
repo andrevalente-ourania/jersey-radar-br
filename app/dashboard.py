@@ -1,3 +1,5 @@
+import hashlib
+import json
 import os
 from datetime import datetime
 from itertools import zip_longest
@@ -9,7 +11,6 @@ import streamlit as st
 from main import (
     BUCKETS,
     MAX_API_ATTEMPTS,
-    MAX_FALLBACK_LINKS,
     MercadoLivreBlockedError,
     collect_opportunities,
     get_meli_access_token,
@@ -57,7 +58,18 @@ QUERY_SPECS = (
     ("cult_beautiful", "camisa {target} retrô goleiro terceira"),
     ("light_collectible", "camisa {target} edição especial patch desconto"),
 )
-SEARCH_CACHE_VERSION = "world-clubs-v1"
+BUCKET_LABELS = {
+    "small_club_cheap": "Desconto",
+    "cult_beautiful": "Cult",
+    "light_collectible": "Colecionável",
+}
+KIND_LABELS = {
+    "club": "Clube brasileiro",
+    "world_club": "Clube internacional",
+    "national_team": "Seleção",
+}
+SEARCH_CACHE_VERSION = "marketplace-ranking-v1"
+MAX_SHORTLIST_ITEMS = 30
 
 
 def build_dashboard_queries(
@@ -93,11 +105,97 @@ def build_provider_url(provider_key: str, query: str) -> str:
     return f"{provider['base_url']}?{urlencode(params)}"
 
 
-BUCKET_LABELS = {
-    "small_club_cheap": "Achados baratos",
-    "cult_beautiful": "Cult e bonitas",
-    "light_collectible": "Colecionáveis leves",
-}
+def query_priority(item: dict[str, str], provider_key: str) -> int:
+    score = {
+        "small_club_cheap": 88,
+        "cult_beautiful": 84,
+        "light_collectible": 82,
+    }[item["bucket"]]
+
+    if provider_key in {"enjoei", "brecho_do_futebol"}:
+        if item["bucket"] == "cult_beautiful":
+            score += 10
+        elif item["bucket"] == "light_collectible":
+            score += 7
+    elif provider_key in {"adidas", "nike"}:
+        if item["kind"] in {"national_team", "world_club"}:
+            score += 6
+        if item["bucket"] == "light_collectible":
+            score += 4
+    elif provider_key in {"mercado_livre", "netshoes"}:
+        if item["bucket"] == "small_club_cheap":
+            score += 7
+
+    return min(100, score)
+
+
+def filter_queries(
+    queries: list[dict[str, str]],
+    search_text: str,
+    kinds: list[str],
+    buckets: list[str],
+) -> list[dict[str, str]]:
+    normalized_search = search_text.casefold().strip()
+    return [
+        item
+        for item in queries
+        if item["kind"] in kinds
+        and item["bucket"] in buckets
+        and (
+            not normalized_search
+            or normalized_search in item["target"].casefold()
+            or normalized_search in item["query"].casefold()
+        )
+    ]
+
+
+def shortlist_id(provider_key: str, item: dict[str, str]) -> str:
+    raw = "|".join((provider_key, item["kind"], item["target"], item["bucket"]))
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+
+
+def load_shortlist_ids() -> set[str]:
+    raw = st.query_params.get("shortlist", "[]")
+    try:
+        values = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return set()
+    if not isinstance(values, list):
+        return set()
+    return {str(value) for value in values[:MAX_SHORTLIST_ITEMS]}
+
+
+def save_shortlist_ids(values: set[str]) -> None:
+    st.query_params["shortlist"] = json.dumps(sorted(values), separators=(",", ":"))
+
+
+def shortlist_entries(
+    queries: list[dict[str, str]], shortlist_ids: set[str]
+) -> list[dict]:
+    entries = []
+    for provider_key, provider in SEARCH_PROVIDERS.items():
+        for item in queries:
+            item_id = shortlist_id(provider_key, item)
+            if item_id not in shortlist_ids:
+                continue
+            entries.append(
+                {
+                    "id": item_id,
+                    "marketplace": provider_key,
+                    "marketplace_label": provider["label"],
+                    "target": item["target"],
+                    "target_type": KIND_LABELS[item["kind"]],
+                    "category": item["bucket"],
+                    "category_label": BUCKET_LABELS[item["bucket"]],
+                    "query": item["query"],
+                    "priority": query_priority(item, provider_key),
+                    "url": build_provider_url(provider_key, item["query"]),
+                }
+            )
+    return sorted(
+        entries,
+        key=lambda entry: (-entry["priority"], entry["marketplace_label"], entry["target"]),
+    )
 
 
 def load_streamlit_secrets() -> None:
@@ -150,12 +248,14 @@ def run_dashboard_search(cache_version: str) -> dict:
         "api_blocked": api_blocked,
         "failed_searches": failed_searches,
         "opportunities": opportunities,
-        "fallback_queries": queries[:MAX_FALLBACK_LINKS],
+        "queries": queries,
         "updated_at": datetime.now().isoformat(timespec="minutes"),
     }
 
 
-def filtered_items(items: list[dict], min_score: int, max_price: int, club_filter: str) -> list[dict]:
+def filtered_items(
+    items: list[dict], min_score: int, max_price: int, club_filter: str
+) -> list[dict]:
     return [
         item
         for item in items
@@ -174,10 +274,12 @@ def render_listing(item: dict) -> None:
                 st.image(thumbnail, use_container_width=True)
             else:
                 st.markdown("<div class='shirt-placeholder'>👕</div>", unsafe_allow_html=True)
-
         with details_column:
             st.markdown(f"#### {item['title']}")
-            st.markdown(f"<div class='price'>R$ {item['price']:,.2f}</div>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div class='price'>R$ {item['price']:,.2f}</div>",
+                unsafe_allow_html=True,
+            )
             st.progress(item["score"] / 100, text=f"Score {item['score']}/100")
             club = item.get("club") or "Clube não identificado"
             condition = "Novo" if item.get("condition") == "new" else item.get("condition", "")
@@ -186,39 +288,144 @@ def render_listing(item: dict) -> None:
                 st.link_button("Ver no Mercado Livre", item["url"], use_container_width=True)
 
 
-def render_results(data: dict, min_score: int, max_price: int, club_filter: str) -> None:
+def render_results(
+    data: dict, min_score: int, max_price: int, club_filter: str
+) -> None:
     items = filtered_items(data["opportunities"], min_score, max_price, club_filter)
+    if not items:
+        st.info("Nenhum anúncio automático encontrado com estes filtros.")
+        return
     tabs = st.tabs([BUCKET_LABELS[bucket] for bucket in BUCKETS])
     for bucket, tab in zip(BUCKETS, tabs):
         with tab:
-            bucket_items = [item for item in items if item["bucket"] == bucket]
-            if not bucket_items:
-                st.info("Nenhuma camiseta encontrada com estes filtros.")
-            for item in bucket_items:
+            for item in [entry for entry in items if entry["bucket"] == bucket]:
                 render_listing(item)
 
 
-def render_fallback(queries: list[dict[str, str]], provider_keys: list[str]) -> None:
-    tabs = st.tabs([BUCKET_LABELS[bucket] for bucket in BUCKETS])
-    for bucket, tab in zip(BUCKETS, tabs):
+def toggle_shortlist(
+    provider_key: str, item: dict[str, str], shortlist_ids: set[str]
+) -> None:
+    item_id = shortlist_id(provider_key, item)
+    updated = set(shortlist_ids)
+    if item_id in updated:
+        updated.remove(item_id)
+    elif len(updated) < MAX_SHORTLIST_ITEMS:
+        updated.add(item_id)
+    save_shortlist_ids(updated)
+    st.rerun()
+
+
+def render_marketplace_rankings(
+    queries: list[dict[str, str]],
+    provider_keys: list[str],
+    min_priority: int,
+    results_per_marketplace: int,
+    shortlist_ids: set[str],
+) -> None:
+    if not provider_keys:
+        st.info("Selecione pelo menos um marketplace no filtro lateral.")
+        return
+    if not queries:
+        st.info("Nenhuma busca corresponde aos filtros escolhidos.")
+        return
+
+    tabs = st.tabs([SEARCH_PROVIDERS[key]["label"] for key in provider_keys])
+    for provider_key, tab in zip(provider_keys, tabs):
         with tab:
-            bucket_queries = [item for item in queries if item["bucket"] == bucket]
-            for item in bucket_queries:
+            ranked = sorted(
+                (
+                    (query_priority(item, provider_key), item)
+                    for item in queries
+                    if query_priority(item, provider_key) >= min_priority
+                ),
+                key=lambda pair: (-pair[0], pair[1]["target"]),
+            )[:results_per_marketplace]
+            st.caption(f"{len(ranked)} buscas priorizadas neste marketplace")
+            for rank, (priority, item) in enumerate(ranked, start=1):
+                item_id = shortlist_id(provider_key, item)
                 with st.container(border=True):
-                    target_type = {
-                        "national_team": "Seleção",
-                        "world_club": "Clube internacional",
-                    }.get(item.get("kind"), "Clube brasileiro")
-                    st.markdown(f"**{item['query']}** · {target_type}")
-                    columns = st.columns(3)
-                    for index, provider_key in enumerate(provider_keys):
-                        provider = SEARCH_PROVIDERS[provider_key]
-                        with columns[index % 3]:
-                            st.link_button(
-                                provider["label"],
-                                build_provider_url(provider_key, item["query"]),
-                                use_container_width=True,
-                            )
+                    title_column, score_column = st.columns([4, 1])
+                    with title_column:
+                        st.markdown(f"#### #{rank} · {item['target']}")
+                        st.caption(
+                            f"{KIND_LABELS[item['kind']]} · {BUCKET_LABELS[item['bucket']]}"
+                        )
+                    with score_column:
+                        st.metric("Prioridade", priority)
+                    st.markdown(f"**Busca:** {item['query']}")
+                    open_column, shortlist_column = st.columns(2)
+                    with open_column:
+                        st.link_button(
+                            f"Abrir na {SEARCH_PROVIDERS[provider_key]['label']}",
+                            build_provider_url(provider_key, item["query"]),
+                            use_container_width=True,
+                        )
+                    with shortlist_column:
+                        button_label = (
+                            "✓ Remover da shortlist"
+                            if item_id in shortlist_ids
+                            else "☆ Adicionar à shortlist"
+                        )
+                        if st.button(
+                            button_label,
+                            key=f"shortlist-{item_id}",
+                            use_container_width=True,
+                        ):
+                            toggle_shortlist(provider_key, item, shortlist_ids)
+
+
+def render_shortlist(queries: list[dict[str, str]], shortlist_ids: set[str]) -> None:
+    entries = shortlist_entries(queries, shortlist_ids)
+    if not entries:
+        st.info(
+            "Sua shortlist está vazia. No ranking, use “Adicionar à shortlist” "
+            "nas buscas que você quer acompanhar."
+        )
+        return
+
+    st.caption(
+        "A shortlist fica salva no endereço desta página. Favorite ou compartilhe "
+        "este link para recuperar a mesma seleção."
+    )
+    for entry in entries:
+        with st.container(border=True):
+            details_column, action_column = st.columns([4, 1])
+            with details_column:
+                st.markdown(
+                    f"**{entry['target']}** · {entry['marketplace_label']} · "
+                    f"{entry['category_label']}"
+                )
+                st.caption(entry["query"])
+                st.link_button("Abrir busca", entry["url"])
+            with action_column:
+                st.metric("Prioridade", entry["priority"])
+                if st.button(
+                    "Remover",
+                    key=f"remove-{entry['id']}",
+                    use_container_width=True,
+                ):
+                    updated = set(shortlist_ids)
+                    updated.remove(entry["id"])
+                    save_shortlist_ids(updated)
+                    st.rerun()
+
+    export_data = {
+        "schema_version": 1,
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "entries": entries,
+    }
+    st.download_button(
+        "Baixar shortlist para automação diária",
+        data=json.dumps(export_data, ensure_ascii=False, indent=2),
+        file_name="jersey-radar-shortlist.json",
+        mime="application/json",
+        use_container_width=True,
+    )
+    st.warning(
+        "A shortlist acompanha buscas. Para disparar alerta real de queda de preço, "
+        "a rotina diária ainda precisa de uma fonte autorizada de preços e de um "
+        "canal de notificação."
+    )
 
 
 def main() -> None:
@@ -237,52 +444,102 @@ def main() -> None:
 
     st.title("👕 Jersey Radar BR")
     st.caption(
-        "Camisas de clubes e seleções em várias lojas, organizadas por preço, "
-        "beleza e potencial de coleção."
+        "Ranking de buscas por marketplace para encontrar camisas cult, "
+        "colecionáveis e com desconto."
     )
 
-    with st.spinner("Procurando camisetas..."):
+    with st.spinner("Preparando o radar..."):
         data = run_dashboard_search(SEARCH_CACHE_VERSION)
 
-    if st.sidebar.button("Atualizar busca", type="primary", use_container_width=True):
+    if st.sidebar.button("Atualizar radar", type="primary", use_container_width=True):
         run_dashboard_search.clear()
         st.rerun()
 
-    st.sidebar.header("Filtros")
-    min_score = st.sidebar.slider("Score mínimo", 0, 100, 65, 5)
-    max_price = st.sidebar.slider("Preço máximo", 50, 1000, 350, 25)
-    clubs = sorted({item["club"] for item in data["opportunities"] if item.get("club")})
-    club_filter = st.sidebar.selectbox("Clube ou seleção", ["Todos", *clubs])
+    st.sidebar.header("Filtros da descoberta")
+    search_text = st.sidebar.text_input("Time ou seleção", placeholder="Ex.: Venezia")
+    selected_kinds = st.sidebar.multiselect(
+        "Tipo",
+        options=list(KIND_LABELS),
+        default=list(KIND_LABELS),
+        format_func=lambda key: KIND_LABELS[key],
+    )
+    selected_buckets = st.sidebar.multiselect(
+        "Ideia",
+        options=list(BUCKET_LABELS),
+        default=list(BUCKET_LABELS),
+        format_func=lambda key: BUCKET_LABELS[key],
+    )
     provider_keys = st.sidebar.multiselect(
-        "Lojas",
+        "Marketplaces",
         options=list(SEARCH_PROVIDERS),
         default=list(SEARCH_PROVIDERS),
         format_func=lambda key: SEARCH_PROVIDERS[key]["label"],
     )
+    min_priority = st.sidebar.slider("Prioridade mínima", 0, 100, 80, 5)
+    results_per_marketplace = st.sidebar.slider(
+        "Resultados por marketplace", 5, 30, 10, 5
+    )
 
-    metric_1, metric_2, metric_3 = st.columns(3)
-    metric_1.metric("Oportunidades", len(data["opportunities"]))
-    metric_2.metric("OAuth", "Ativo" if data["oauth_ok"] else "Indisponível")
-    metric_3.metric("API Mercado Livre", "Bloqueada" if data["api_blocked"] else "Disponível")
-    st.caption(f"Atualizado em {data['updated_at'].replace('T', ' ')}")
-
+    min_score, max_price, club_filter = 65, 350, "Todos"
     if data["opportunities"]:
-        render_results(data, min_score, max_price, club_filter)
-
-    if not data["opportunities"] and not (data["api_blocked"] or not data["oauth_ok"]):
-        st.info("A busca terminou sem oportunidades acima do score mínimo.")
-
-    st.divider()
-    st.subheader("Buscar promoções em outras lojas")
-    if data["api_blocked"]:
-        st.warning(
-            "A API do Mercado Livre bloqueou a busca automática, mas os links "
-            "multiloja abaixo continuam funcionando."
+        st.sidebar.divider()
+        st.sidebar.header("Filtros dos anúncios")
+        min_score = st.sidebar.slider("Score do anúncio", 0, 100, 65, 5)
+        max_price = st.sidebar.slider("Preço máximo", 50, 1000, 350, 25)
+        clubs = sorted(
+            {item["club"] for item in data["opportunities"] if item.get("club")}
         )
-    if provider_keys:
-        render_fallback(data["fallback_queries"], provider_keys)
-    else:
-        st.info("Selecione pelo menos uma loja no filtro lateral.")
+        club_filter = st.sidebar.selectbox("Clube ou seleção", ["Todos", *clubs])
+
+    filtered_queries = filter_queries(
+        data["queries"], search_text, selected_kinds, selected_buckets
+    )
+    shortlist_ids = load_shortlist_ids()
+    valid_shortlist_ids = {
+        shortlist_id(provider_key, item)
+        for provider_key in SEARCH_PROVIDERS
+        for item in data["queries"]
+    }
+    shortlist_ids &= valid_shortlist_ids
+
+    metric_1, metric_2, metric_3, metric_4 = st.columns(4)
+    metric_1.metric("Buscas filtradas", len(filtered_queries))
+    metric_2.metric("Marketplaces", len(provider_keys))
+    metric_3.metric("Shortlist", len(shortlist_ids))
+    metric_4.metric("API Mercado Livre", "Bloqueada" if data["api_blocked"] else "Disponível")
+    st.caption(f"Radar atualizado em {data['updated_at'].replace('T', ' ')}")
+
+    if data["api_blocked"]:
+        st.info(
+            "A API do Mercado Livre está bloqueada, mas os rankings e filtros "
+            "multimarketplace abaixo continuam funcionando."
+        )
+
+    ranking_tab, shortlist_tab, listings_tab = st.tabs(
+        [
+            "Ranking por marketplace",
+            f"⭐ Shortlist ({len(shortlist_ids)})",
+            "Anúncios automáticos",
+        ]
+    )
+    with ranking_tab:
+        render_marketplace_rankings(
+            filtered_queries,
+            provider_keys,
+            min_priority,
+            results_per_marketplace,
+            shortlist_ids,
+        )
+    with shortlist_tab:
+        render_shortlist(data["queries"], shortlist_ids)
+    with listings_tab:
+        if data["opportunities"]:
+            render_results(data, min_score, max_price, club_filter)
+        else:
+            st.info(
+                "Sem anúncios automáticos enquanto a busca da API estiver bloqueada. "
+                "Use o ranking por marketplace."
+            )
 
 
 if __name__ == "__main__":
