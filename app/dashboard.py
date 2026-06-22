@@ -68,7 +68,7 @@ KIND_LABELS = {
     "world_club": "Clube internacional",
     "national_team": "Seleção",
 }
-SEARCH_CACHE_VERSION = "marketplace-ranking-v1"
+SEARCH_CACHE_VERSION = "marketplace-ranking-v2"
 MAX_SHORTLIST_ITEMS = 30
 
 
@@ -103,6 +103,22 @@ def build_provider_url(provider_key: str, query: str) -> str:
     params = dict(provider.get("extra_params", {}))
     params[provider["query_param"]] = query
     return f"{provider['base_url']}?{urlencode(params)}"
+
+
+def build_provider_query(provider_key: str, item: dict[str, str]) -> str:
+    """Build a focused search without pretending that a listing was validated."""
+    target = item["target"]
+    prefix = "camisa futebol" if provider_key in {
+        "mercado_livre",
+        "enjoei",
+        "brecho_do_futebol",
+    } else "camisa"
+    suffix = {
+        "small_club_cheap": "",
+        "cult_beautiful": " retrô",
+        "light_collectible": " edição especial",
+    }[item["bucket"]]
+    return f"{prefix} {target}{suffix}"
 
 
 def query_priority(item: dict[str, str], provider_key: str) -> int:
@@ -187,9 +203,12 @@ def shortlist_entries(
                     "target_type": KIND_LABELS[item["kind"]],
                     "category": item["bucket"],
                     "category_label": BUCKET_LABELS[item["bucket"]],
-                    "query": item["query"],
+                    "query": build_provider_query(provider_key, item),
                     "priority": query_priority(item, provider_key),
-                    "url": build_provider_url(provider_key, item["query"]),
+                    "url": build_provider_url(
+                        provider_key, build_provider_query(provider_key, item)
+                    ),
+                    "listing_validated": False,
                 }
             )
     return sorted(
@@ -340,9 +359,12 @@ def render_marketplace_rankings(
                 ),
                 key=lambda pair: (-pair[0], pair[1]["target"]),
             )[:results_per_marketplace]
-            st.caption(f"{len(ranked)} buscas priorizadas neste marketplace")
+            st.caption(
+                f"{len(ranked)} ideias de busca · anúncios e preços ainda não confirmados"
+            )
             for rank, (priority, item) in enumerate(ranked, start=1):
                 item_id = shortlist_id(provider_key, item)
+                provider_query = build_provider_query(provider_key, item)
                 with st.container(border=True):
                     title_column, score_column = st.columns([4, 1])
                     with title_column:
@@ -352,12 +374,15 @@ def render_marketplace_rankings(
                         )
                     with score_column:
                         st.metric("Prioridade", priority)
-                    st.markdown(f"**Busca:** {item['query']}")
+                    st.markdown(f"**Pesquisa sugerida:** {provider_query}")
+                    st.caption(
+                        "🔎 Busca não validada — o marketplace pode não ter esse produto."
+                    )
                     open_column, shortlist_column = st.columns(2)
                     with open_column:
                         st.link_button(
-                            f"Abrir na {SEARCH_PROVIDERS[provider_key]['label']}",
-                            build_provider_url(provider_key, item["query"]),
+                            f"Pesquisar no {SEARCH_PROVIDERS[provider_key]['label']}",
+                            build_provider_url(provider_key, provider_query),
                             use_container_width=True,
                         )
                     with shortlist_column:
@@ -396,7 +421,7 @@ def render_shortlist(queries: list[dict[str, str]], shortlist_ids: set[str]) -> 
                     f"{entry['category_label']}"
                 )
                 st.caption(entry["query"])
-                st.link_button("Abrir busca", entry["url"])
+                st.link_button("Pesquisar no marketplace", entry["url"])
             with action_column:
                 st.metric("Prioridade", entry["priority"])
                 if st.button(
@@ -422,7 +447,8 @@ def render_shortlist(queries: list[dict[str, str]], shortlist_ids: set[str]) -> 
         use_container_width=True,
     )
     st.warning(
-        "A shortlist acompanha buscas. Para disparar alerta real de queda de preço, "
+        "A shortlist acompanha pesquisas sugeridas, não produtos confirmados. Para "
+        "disparar alerta real de queda de preço, "
         "a rotina diária ainda precisa de uma fonte autorizada de preços e de um "
         "canal de notificação."
     )
@@ -444,7 +470,7 @@ def main() -> None:
 
     st.title("👕 Jersey Radar BR")
     st.caption(
-        "Ranking de buscas por marketplace para encontrar camisas cult, "
+        "Ideias de busca por marketplace para encontrar camisas cult, "
         "colecionáveis e com desconto."
     )
 
@@ -511,15 +537,16 @@ def main() -> None:
 
     if data["api_blocked"]:
         st.info(
-            "A API do Mercado Livre está bloqueada, mas os rankings e filtros "
-            "multimarketplace abaixo continuam funcionando."
+            "A API do Mercado Livre está bloqueada. Por isso, o radar não consegue "
+            "confirmar produtos, imagens ou preços: os links abaixo são pesquisas "
+            "sugeridas e podem retornar itens irrelevantes ou nenhum resultado."
         )
 
     ranking_tab, shortlist_tab, listings_tab = st.tabs(
         [
-            "Ranking por marketplace",
+            "Ideias por marketplace",
             f"⭐ Shortlist ({len(shortlist_ids)})",
-            "Anúncios automáticos",
+            "Produtos confirmados",
         ]
     )
     with ranking_tab:
@@ -537,8 +564,8 @@ def main() -> None:
             render_results(data, min_score, max_price, club_filter)
         else:
             st.info(
-                "Sem anúncios automáticos enquanto a busca da API estiver bloqueada. "
-                "Use o ranking por marketplace."
+                "Nenhum produto confirmado enquanto a API estiver bloqueada. Use as "
+                "ideias por marketplace para pesquisar manualmente."
             )
 
 
